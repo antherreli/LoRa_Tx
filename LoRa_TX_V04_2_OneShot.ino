@@ -1,11 +1,15 @@
 //======================================================================
 /*
     Envia os dados brutos do sensor uma vez a cada X minutos.
-    existe um WDT ativo d e5 segundos 
+    2 sensores para leitura em multiprofundidade 
+    existe um WDT ativo de 5 segundos 
     após cada cilclo o sistema entre em deeep sleep visando o baixo consumo de energia 
 
-    Giovanni Antherreli   
-    16/10/2025
+    Eng. Giovanni Antherreli   
+    06/07/2025
+
+    #warning "Sensor 01 usando frame de teste - substituir por leitura real antes de ir a campo"
+
 
 
 */
@@ -63,7 +67,7 @@
 RTC_DATA_ATTR volatile int counter = 0;
 
 
-const int wdtTimeout = 20000;  //tempo em ms para ativar watchdog
+const int wdtTimeout = 5000;  //tempo em ms para ativar watchdog
 hw_timer_t * timer = NULL;
 
 //============HARDWARE===========================================//
@@ -106,6 +110,10 @@ double txNumber;
 bool lora_idle=true; 
 bool readStatus = false; 
 volatile uint8_t txCounter = 0;
+
+//variáveis auxiliares para watchdog interno
+unsigned long waitStartTime = 0;         
+const unsigned long TX_WAIT_TIMEOUT = 5000; // 5s para confirmar TX
 
 //buffer auxiliar para transmissão de dados
 volatile uint8_t bufferAux01[11] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; //bufer de leitura auxiliar para sensor 02
@@ -151,6 +159,7 @@ void setup() {
     
     
 
+    #warning "Sensor 01 usando frame de teste - substituir por leitura real antes de ir a campo"
 
     //modem sleep 
     disableWiFi();
@@ -271,7 +280,8 @@ void loop()
           //bufferAux[11] = SensorADDR_;
           debugTx();
           Radio.Send( (uint8_t *)bufferTx, 14);
-          //state = LOW_POWER;
+          waitStartTime = millis();      // <-- inicia contagem do timeout próprio
+          
          
           state=WAIT;
           break;
@@ -286,8 +296,10 @@ void loop()
         case WAIT:
           timerWrite(timer, 0); //reset timer (feed watchdog)
           Radio.IrqProcess( );
-          //DOES NOTHING  
-          //Serial.println("waiting...");
+          if (millis() - waitStartTime > TX_WAIT_TIMEOUT) {
+             Serial.println("Timeout aguardando confirmacao de TX - forcando reset do radio/sistema");
+             resetModule();   // reinício limpo: garante reinicialização do rádio também
+            }
           break;
 
         default:
