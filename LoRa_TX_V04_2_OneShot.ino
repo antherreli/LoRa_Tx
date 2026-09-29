@@ -8,7 +8,7 @@
     Eng. Giovanni Antherreli   
     06/07/2025
 
-    #warning "Sensor 01 usando frame de teste - substituir por leitura real antes de ir a campo"
+    
 
 
 
@@ -56,13 +56,13 @@
 //================================================================//
 
 // gerenciamento de rede
-#define SensorADDR     0x0B //endereço nó sensor 
+#define SensorADDR     0x0C //endereço nó sensor 
 #define MAC_ADDR   0xF5 //byte de controle para RX
 
 
 
 #define uS_TO_S_FACTOR 1000000ULL  /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP  10    /* Time ESP32 will go to sleep (in seconds) */
+#define TIME_TO_SLEEP  20    /* Time ESP32 will go to sleep (in seconds) */
 //RTC_DATA_ATTR volatile int bootCount = 0;
 RTC_DATA_ATTR volatile int counter = 0;
 
@@ -105,11 +105,11 @@ SPIClass sd_spi(HSPI); //SPI para controle do módulo SD card
 volatile char state = READ_SENSOR;  //variável responsável por armazenar o estado atual da máquina de estados
 
 //==================VARIÁVEIS GLOBAIS =============================//
-double txNumber;
+
 
 bool lora_idle=true; 
-bool readStatus = false; 
-volatile uint8_t txCounter = 0;
+
+
 
 //variáveis auxiliares para watchdog interno
 unsigned long waitStartTime = 0;         
@@ -118,13 +118,13 @@ const unsigned long TX_WAIT_TIMEOUT = 5000; // 5s para confirmar TX
 //buffer auxiliar para transmissão de dados
 volatile uint8_t bufferAux01[11] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; //bufer de leitura auxiliar para sensor 02
 volatile uint8_t bufferAux02[11] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; //buffer de leitura auxiliar para sensor 02
-volatile uint8_t  bufferEC[7] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0}; // buffer de leitura de consutividade do sensor 02
-volatile uint8_t bufferTx[14] = { 0x00, 0x00, //reservado para endereços 
+
+volatile uint8_t  bufferTx[14] = { 0x00, 0x00, //reservado para endereços 
                                   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //slot para dados do sensor 01
                                   0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; //slot para dados do sensor 02
                              
 
-String dataMessage;
+
  
 //================================================================//
 
@@ -138,7 +138,7 @@ void OnTxTimeout( void );   //ESSA FUNÇÃO É EXECTUADA QUANDO O RECEPTOR NÃO 
 //PROTÓTIPO DAS FUNÇÕES AUXILIARES
 bool wait(unsigned long tempoEsperado);
 void readSensor(void);   //lê os dados do sensor 01 e armazena em buffer local
-void readSensor02(void);  //lê os dados do sensor 02 e armazena em buffer local
+
 void writeEEPROM (uint8_t *buffer, uint8_t size, uint8_t ADDR); //escreve os dados do sensor na EEPROM interna  
 void sdInit(void); 
 void gravaDados(volatile uint8_t size, uint8_t counter); 
@@ -159,7 +159,7 @@ void setup() {
     
     
 
-    #warning "Sensor 01 usando frame de teste - substituir por leitura real antes de ir a campo"
+    
 
     //modem sleep 
     disableWiFi();
@@ -218,7 +218,7 @@ void setup() {
     //delay(100);
  
 	
-    txNumber=0;
+ 
 
     RadioEvents.TxDone = OnTxDone;
     RadioEvents.TxTimeout = OnTxTimeout;
@@ -255,7 +255,7 @@ void loop()
           
           sensorON();
           readSensor();
-          readSensor02();
+          //readSensor02();
           sensorOFF();
           
           state = DATA_MANAGEMENT;
@@ -268,16 +268,16 @@ void loop()
           //gravaDados((uint8_t *)bufferAux, 11, counter);      //grava dados de temperature e humidade em formato cvs para backup
           carregaBufferTX();
           Serial.println("Dados Armazenados...");
+          debugTx();
           
-         state = TX;
+         state = TX; 
           
           break;  
         
         case TX:
           timerWrite(timer, 0); //reset timer (feed watchdog)
           delay(10);
-          //txCounter++;
-          //bufferAux[11] = SensorADDR_;
+         
           debugTx();
           Radio.Send( (uint8_t *)bufferTx, 14);
           waitStartTime = millis();      // <-- inicia contagem do timeout próprio
@@ -342,12 +342,18 @@ void readSensor(void)
   
   
 
+  
+  for (uint8_t i = 0; i < 11; i++) 
+  {
+    bufferAux01[i] = 0x00;
+    bufferAux02[i] = 0x00;
+  }
+  volatile const uint8_t MS[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x03, 0x05, 0xCB};
+  volatile const uint8_t MS2[] = {0x02, 0x03, 0x00, 0x00, 0x00, 0x03, 0x05, 0xF8};
+  
   // =========================
   //  Sensor 01
   // =========================
-  /*volatile const uint8_t MS[] = {0x02, 0x03, 0x00, 0x00, 0x00, 0x03, 0x05, 0xF8};
-  volatile uint8_t bufferInterno[11]; //buffer auxiliar para leitura de dados do sensor
-  
   //habilita o barramento para transmissão
   digitalWrite(RE, HIGH);
   
@@ -364,22 +370,31 @@ void readSensor(void)
   while(mod.available()){
     
     if(c < 11) bufferAux01[c++] = mod.read(); //armazena dados do sensor em buffer temporário
-  }*/
-  //teste para validação 
-  uint8_t frame[11] = {
-    0x01,
-    0x03,
-    0x06,
-    0x02, 0x92,
-    0xFF, 0x9B,
-    0x03, 0xE8,
-    0x38, 0x75
-  };
-
-  for(uint8_t i = 0; i<11; i++){
-    bufferAux01[i] = frame[i];
   }
 
+  // =========================
+  //  Sensor 02
+  // =========================
+  
+  //habilita o barramento para transmissão
+  digitalWrite(RE, HIGH);
+  
+  for (uint8_t i=0; i<8; i++) mod.write(MS2[i]); 
+  mod.flush(); 
+
+  //habilita o barramento para leitura
+  digitalWrite(RE, LOW);
+  //digitalWrite(DE, LOW);
+
+  delay(500);
+
+  c = 0; 
+  while(mod.available()){
+    
+    if(c < 11) bufferAux02[c++] = mod.read(); //armazena dados do sensor em buffer temporário
+  }
+
+ 
 
   
 
@@ -434,15 +449,7 @@ void gravaDados(uint8_t *buffer, uint8_t size, uint8_t counter)
   Serial.println("Temperature: \t" + String(temperature));
   Serial.println("Conductivity: \t" + String(conductivity));
 
-  //Concatenate all info separated by commas
-    //dataMessage = String(counter) + "," + String(temperature) + "," + String(humidity) + "," + String(conductivity)+ "\r\n";
-    //.print("Saving data: ");
-    //Serial.println(dataMessage);
-
-    //Append the data to file
-    //appendFile(SD, "/data.txt", dataMessage.c_str());
-
-    //for (uint8_t i=0; i<11; i++) bufferAux[i] = 0x00;
+  
 
 }
 
@@ -506,75 +513,8 @@ void print_reset_reason(int reason)
   }
 }
 
-void readSensor02(void)
-{
-  
-  
-  // =========================
-  //  Sensor 02
-  // ========================= 
-
-  //readStatus = false;
-  volatile const uint8_t MS[] =     {0x01, 0x03, 0x00, 0x02, 0x00, 0x02, 0x65, 0xCB};     //frame para leitura de umidade e temperatura
-  volatile const uint8_t CMD_EC[] = {0x01, 0x03, 0x00, 0x15, 0x00, 0x01, 0x95, 0xCE}; //frame para leitura de condutividade 
-
-  //habilita o barramento para transmissão
-  digitalWrite(RE, HIGH);
-  
-  for (uint8_t i=0; i<8; i++) mod.write(MS[i]); 
-  mod.flush(); 
-
-  //habilita o barramento para leitura
-  digitalWrite(RE, LOW);
- 
-
-  delay(500);
-
-  uint8_t c = 0; 
-  while(mod.available()){
-    
-    if(c < 9) bufferAux02[c++] = mod.read(); 
-    
-  }
-
-  
-  
-  
-  // =========================
-  // CONDUTIVIDADE
-  // =========================
-
-  // Limpa buffer serial
- while(mod.available()) mod.read();
-
-  //habilita o barramento para transmissão
-  digitalWrite(RE, HIGH);
-  
-  for (uint8_t i=0; i<8; i++)
-  { 
-    mod.write(CMD_EC[i]); 
-  }
-  mod.flush(); 
-
-  //habilita o barramento para leitura
-  digitalWrite(RE, LOW);
-  delay(500);
-
-  
-  uint8_t Ec = 0; 
-  while(mod.available()){
-    
-    if(Ec < 7) 
-    {
-      bufferEC[Ec++] = mod.read(); 
-    }
-    
-  }
-
-  
 
 
-}
 
 void sensorON(void)
 {
@@ -604,12 +544,11 @@ void carregaBufferTX(void)
              bufferTx[i] = bufferAux01[i+1];
           }
   // Sensor 1 -> bytes 8 a 13
-          for(uint8_t i =8; i < 12; i++)
+          for(uint8_t i =8; i < 14; i++)
           {
              bufferTx[i] = bufferAux02[i-5];
           }       
-  bufferTx[12] = bufferEC[3];
-  bufferTx[13] = bufferEC[4];
+  
    
 
 }
