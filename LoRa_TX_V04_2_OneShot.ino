@@ -62,7 +62,7 @@
 
 
 #define uS_TO_S_FACTOR 1000000ULL  /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP  20    /* Time ESP32 will go to sleep (in seconds) */
+#define TIME_TO_SLEEP  60    /* Time ESP32 will go to sleep (in seconds) */
 //RTC_DATA_ATTR volatile int bootCount = 0;
 RTC_DATA_ATTR volatile int counter = 0;
 
@@ -82,6 +82,8 @@ hw_timer_t * timer = NULL;
 #define Vext_Ctrl     36  //não utilizado 
 #define bussControl   45  //habilita o barramento RS485
 #define LED           35  // não utilizado
+#define ADC1_CH1       2 // canal 1 ADC
+#define adc1Control   46 // habilita leitura da bateria 
 //================================================================//
 
 //OBJETO DA UART VIRTUAL
@@ -118,12 +120,19 @@ const unsigned long TX_WAIT_TIMEOUT = 5000; // 5s para confirmar TX
 //buffer auxiliar para transmissão de dados
 volatile uint8_t bufferAux01[11] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; //bufer de leitura auxiliar para sensor 02
 volatile uint8_t bufferAux02[11] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; //buffer de leitura auxiliar para sensor 02
+uint8_t bufferVbat[4] =   {0x00, 0x00, 0x00, 0x00};
 
-volatile uint8_t  bufferTx[14] = { 0x00, 0x00, //reservado para endereços 
+volatile uint8_t  bufferTx[18] = { 0x00, 0x00, //reservado para endereços 
                                   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //slot para dados do sensor 01
-                                  0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; //slot para dados do sensor 02
+                                  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //slot para dados do sensor 02
+                                  0x00, 0x00, 0x00, 0x00};            //slot para nível de tensão da bateria 
                              
 
+float R1 = 300000.0;   // Resistor 1 (267k)  
+float R2 = 100000.0;  // Resistor 2 (100k)
+
+// Fator calibração obtido entre o valor real da bateria e o valor que estava sendo obtido no código
+float fatorcalibracao = 1; 
 
  
 //================================================================//
@@ -138,6 +147,8 @@ void OnTxTimeout( void );   //ESSA FUNÇÃO É EXECTUADA QUANDO O RECEPTOR NÃO 
 //PROTÓTIPO DAS FUNÇÕES AUXILIARES
 bool wait(unsigned long tempoEsperado);
 void readSensor(void);   //lê os dados do sensor 01 e armazena em buffer local
+void readVbat(void);    //Lé tensão da bateria e carrega buffer auxiliar 
+float lerMediaADC(void); // Função que faz a média de várias leituras do ADC
 
 void writeEEPROM (uint8_t *buffer, uint8_t size, uint8_t ADDR); //escreve os dados do sensor na EEPROM interna  
 void sdInit(void); 
@@ -175,6 +186,9 @@ void setup() {
     //nincializa cartão SD
     sdInit();
 
+    // Define a atenuação para leitura de até 3.3V
+  analogSetAttenuation(ADC_11db);
+
       // If the data.txt file doesn't exist
     // Create a file on the SD card and write the data labels
     /*File file = SD.open("/data.txt");
@@ -200,16 +214,17 @@ void setup() {
     digitalWrite(RE, LOW);
     
     pinMode(sensorControl, OUTPUT);
-    digitalWrite(sensorControl, HIGH);
+    digitalWrite(sensorControl, LOW);
 
     pinMode(bussControl, OUTPUT);
     digitalWrite(bussControl, LOW);
 
-    pinMode(Vext_Ctrl, OUTPUT);
-    digitalWrite(Vext_Ctrl, HIGH);
+    //pinMode(Vext_Ctrl, OUTPUT);
+    //digitalWrite(Vext_Ctrl, HIGH);
+    
+    
 
-    //pinMode(LED, OUTPUT);
-    //digitalWrite(LED, HIGH);
+    
 
 
     delay(10);
@@ -257,6 +272,7 @@ void loop()
           readSensor();
           //readSensor02();
           sensorOFF();
+          readVbat();
           
           state = DATA_MANAGEMENT;
           ++counter; 
@@ -279,7 +295,7 @@ void loop()
           delay(10);
          
           debugTx();
-          Radio.Send( (uint8_t *)bufferTx, 14);
+          Radio.Send( (uint8_t *)bufferTx, sizeof(bufferTx));
           waitStartTime = millis();      // <-- inicia contagem do timeout próprio
           
          
@@ -320,7 +336,7 @@ void loop()
 void OnTxDone( void )
 {
 	Serial.println("TX done......");
-  for (uint8_t i=0; i<14; i++) bufferTx[i] = 0x00;
+  for (uint8_t i=0; i<sizeof(bufferTx); i++) bufferTx[i] = 0x00;
   state = LOW_POWER;
 	lora_idle = true;
   
@@ -543,13 +559,16 @@ void carregaBufferTX(void)
           {
              bufferTx[i] = bufferAux01[i+1];
           }
-  // Sensor 1 -> bytes 8 a 13
+  // Sensor 2 -> bytes 8 a 13
           for(uint8_t i =8; i < 14; i++)
           {
              bufferTx[i] = bufferAux02[i-5];
           }       
-  
-   
+  //tensão bateria --> bytes 14 a 17
+   for(uint8_t i =0; i < 4; i++)
+          {
+             bufferTx[i+14] = bufferVbat[i];
+          }  
 
 }
 
@@ -559,7 +578,7 @@ void debugTx(void)
 
   //Serial.printf("Endereco sensor: %x\n", SensorADDR);
   Serial.println("Frame Tx:");
-  for(uint i = 0; i<14; i++) 
+  for(uint i = 0; i<sizeof(bufferTx); i++) 
   {
     if (bufferTx[i] < 0x10) Serial.print("0");
     Serial.print(bufferTx[i],HEX);
@@ -593,6 +612,56 @@ void debugTx(void)
   Serial.println("Temperature: \t" + String(temperature_));
   Serial.println("Conductivity: \t" + String(conductivity_));
 
+  uint8_t vBatBytes[4];
+  float vBateria = 0;
+  for(uint8_t i = 0; i<sizeof(vBatBytes); i++) vBatBytes[i] =  bufferTx[14+i];
+  memcpy(&vBateria, vBatBytes, sizeof(float));
+
+  Serial.print("Tensão da Bateria: ");
+  Serial.print(vBateria);
+  Serial.println(" V");
+
+}
+
+void readVbat(void)
+{
+  timerWrite(timer, 0); //reset timer (feed watchdog)
+  
+  float valorRaw = lerMediaADC();
+  
+  // Converte valor bruto (0-4095) para tensão no pino (0-3.3V)
+  float vPino = (valorRaw / 4095.0) * 3.3;
+  
+  // Calcula a tensão real da bateria baseada no divisor-
+  float vBateria = vPino * ((R1 + R2) / R2) * fatorcalibracao;
+
+  for (uint8_t i = 0; i < sizeof(bufferVbat); i++) bufferVbat[i] = 0x00;
+  memcpy(bufferVbat, &vBateria, sizeof(float));
+  Serial.println("Frame Vbat:");
+  for(uint i = 0; i<sizeof(bufferVbat); i++) 
+  {
+    if (bufferVbat[i] < 0x10) Serial.print("0");
+    Serial.print(bufferVbat[i],HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
+  
+  // Exibe o valor no monitor serial
+  Serial.print("Tensão da Bateria: ");
+  Serial.print(vBateria);
+  Serial.println(" V");
+  
+  
+}
+
+float lerMediaADC(void) {
+  int amostras = 50;
+  long soma = 0;
+  for (int i = 0; i < amostras; i++) {
+    soma += analogRead(ADC1_CH1);
+    delay(2);
+  }
+  return soma / (float)amostras;
 }
 
 

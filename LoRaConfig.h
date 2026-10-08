@@ -1,9 +1,9 @@
 #ifndef LORACONFIG_H
 #define LORACONFIG_H
 
-#define RF_FREQUENCY                                915000000 // Hz
+#define RF_FREQUENCY                                915000000 // 915MHz
 
-#define TX_OUTPUT_POWER                             22        // dBm
+#define TX_OUTPUT_POWER                             22        // dBm (21 +- 1)
 
 #define LORA_BANDWIDTH                              0         // [0: 125 kHz,
                                                               //  1: 250 kHz,
@@ -21,7 +21,7 @@
 
 
 #define RX_TIMEOUT_VALUE                            1000
-#define BUFFER_SIZE                                 14 // Define the payload size here
+#define BUFFER_SIZE                                 18 // Define the payload (pacote de dados) size here
 
 char txpacket[BUFFER_SIZE];
 char rxpacket[BUFFER_SIZE];
